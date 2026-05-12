@@ -1,4 +1,55 @@
 import pandas as pd
+import numpy as np
+
+def create_segment_summary(df, group_cols, top_n=None):
+    """
+    Create summary statistics for selected grouping columns.
+    Parameters
+    ----------
+    df : pandas.DataFrame
+    group_cols : str or list
+        Column(s) used for grouping.
+    top_n : int, optional
+        Keep only the top N groups by transaction count.
+    Returns
+    -------
+    pandas.DataFrame
+    """
+
+    if isinstance(group_cols, str):
+        group_cols = [group_cols]
+    # Aggregate statistics
+    summary = (
+        df.groupby(group_cols)
+          .agg(
+              Transactions=('ClosePrice', 'count'),
+              MedianClosePrice=('ClosePrice', 'median'),
+              AvgClosePrice=('ClosePrice', 'mean'),
+              MedianPricePerSqFt=('PricePerSqFt', 'median'),
+              AvgPricePerSqFt=('PricePerSqFt', 'mean'),
+              MedianPriceRatio=('PriceRatio', 'median'),
+              AvgPriceRatio=('PriceRatio', 'mean'),
+              MedianDaysOnMarket=('DaysOnMarket_Clean', 'median'),
+              AvgDaysOnMarket=('DaysOnMarket_Clean', 'mean'),
+              MedianListingToContract=('ListingToContractDays', 'median'),
+              AvgListingToContract=('ListingToContractDays', 'mean'),
+              MedianContractToClose=('ContractToCloseDays', 'median'),
+              AvgContractToClose=('ContractToCloseDays', 'mean')
+          )
+          .reset_index()
+    )
+
+    # Sort by transaction volume
+    summary = summary.sort_values('Transactions', ascending=False)
+
+    # Keep only top N groups if specified
+    if top_n:
+        summary = summary.head(top_n)
+
+    # Round numeric columns
+    numeric_cols = summary.select_dtypes(include=[np.number]).columns
+    summary[numeric_cols] = summary[numeric_cols].round(2)
+    return summary
 
 listing = pd.read_csv("/Users/li/Desktop/idx Exchange/filtered/CRMLSListing_Residential.csv")
 
@@ -164,3 +215,135 @@ print("Positive longitude:", listing["positive_longitude_flag"].sum())
 print("Out-of-bounds coordinates:", listing["out_of_bounds_flag"].sum())
 
 listing.to_csv("/Users/li/Desktop/idx Exchange/filtered/listing_final.csv", index=False)
+
+# Week 6
+listing['PriceRatio'] = np.where(
+    listing['OriginalListPrice'] > 0,
+    listing['ClosePrice'] / listing['OriginalListPrice'],
+    np.nan
+)
+
+listing['PricePerSqFt'] = np.where(
+    listing['LivingArea'] > 0,
+    listing['ClosePrice'] / listing['LivingArea'],
+    np.nan
+)
+
+listing['DaysOnMarket_Clean'] = pd.to_numeric(
+    listing['DaysOnMarket'],
+    errors='coerce'
+)
+
+listing['Year'] = listing['CloseDate'].dt.year
+listing['Month'] = listing['CloseDate'].dt.month
+listing['MonthName'] = listing['CloseDate'].dt.strftime('%b')
+listing['Quarter'] = listing['CloseDate'].dt.quarter
+
+listing['YrMo'] = listing['CloseDate'].dt.strftime('%Y-%m')
+listing['YearMonth'] = listing['CloseDate'].dt.to_period('M')
+
+listing['CloseToOriginalListRatio'] = listing['PriceRatio']
+
+listing['ListingToContractDays'] = (
+    listing['PurchaseContractDate'] - listing['ListingContractDate']
+).dt.days
+
+listing['ContractToCloseDays'] = (
+    listing['CloseDate'] - listing['PurchaseContractDate']
+).dt.days
+
+# Segment Analysis
+# ============================================================
+
+# 1. Property Type Analysis
+
+# ============================================================
+
+property_type_summary = create_segment_summary(listing, 'PropertyType')
+
+property_subtype_summary = create_segment_summary(listing, 'PropertySubType')
+
+# ============================================================
+
+# 2. Geographic Analysis
+
+# ============================================================
+
+county_summary = create_segment_summary(listing, 'CountyOrParish')
+
+mls_area_summary = create_segment_summary(listing, 'MLSAreaMajor')
+
+# Optional combined geographic analysis
+county_mls_summary = create_segment_summary(
+    listing,
+    ['CountyOrParish', 'MLSAreaMajor']
+)
+
+# ============================================================
+
+# 3. Competitive Intelligence (Brokerage Analysis)
+
+# ============================================================
+
+list_office_summary = create_segment_summary(
+    listing,
+    'ListOfficeName',
+    top_n=20          # Top 20 listing offices by volume
+)
+
+buyer_office_summary = create_segment_summary(
+    listing,
+    'BuyerOfficeName',
+    top_n=20          # Top 20 buyer offices by volume
+
+)
+
+# Optional listing vs buyer office cross-analysis
+office_pair_summary = create_segment_summary(
+    listing,
+    ['ListOfficeName', 'BuyerOfficeName'],
+    top_n=50
+)
+
+# ============================================================
+
+# 4. Export Results for Tableau
+
+# ============================================================
+
+segment_summaries = {
+    'property_type_summary': property_type_summary,
+    'property_subtype_summary': property_subtype_summary,
+    'county_summary': county_summary,
+    'mls_area_summary': mls_area_summary,
+    'county_mls_summary': county_mls_summary,
+    'list_office_summary': list_office_summary,
+    'buyer_office_summary': buyer_office_summary,
+    'office_pair_summary': office_pair_summary
+}
+
+for name, summary_df in segment_summaries.items():
+    summary_df.to_csv(f'/Users/li/Desktop/idx Exchange/outputtable/{name}_list.csv', index=False)
+    print(f"Saved {name}_list.csv ({summary_df.shape[0]} rows)")
+
+# ============================================================
+
+# 5. Preview Key Outputs
+
+# ============================================================
+
+print("\n=== Property Type Summary ===")
+
+print(property_type_summary.head())
+
+print("\n=== County Summary ===")
+
+print(county_summary.head())
+
+print("\n=== Top Listing Offices ===")
+
+print(list_office_summary.head())
+
+print("\n=== Top Buyer Offices ===")
+
+print(buyer_office_summary.head())
